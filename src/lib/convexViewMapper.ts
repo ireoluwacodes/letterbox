@@ -58,8 +58,10 @@ export function gameViewToGameState(view: GameView): TGameState {
     isHost: true,
   }
 
-  const players =
-    view.hostName.trim().length > 0 ? [hostRow, ...basePlayers] : basePlayers
+  /** Synthetic host row is lobby-only so play/over scoreboards stay real players only. */
+  const includeHostRow =
+    view.hostName.trim().length > 0 && view.status === "lobby"
+  const players = includeHostRow ? [hostRow, ...basePlayers] : basePlayers
 
   const turnOrder = (view.turnOrder ?? []).map((id) => String(id))
 
@@ -82,7 +84,7 @@ export function gameViewToGameState(view: GameView): TGameState {
     selfPlayerId: view.viewerPlayerId
       ? String(view.viewerPlayerId)
       : undefined,
-    hostId: LETTERBOX_HOST_ROW_ID,
+    hostId: includeHostRow ? LETTERBOX_HOST_ROW_ID : undefined,
     hostName: view.hostName,
   }
 }

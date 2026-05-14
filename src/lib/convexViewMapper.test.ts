@@ -51,10 +51,28 @@ describe("gameViewToGameState", () => {
     expect(g.status).toBe("playing")
   })
 
-  it("prepends a synthetic host row", () => {
+  it("prepends a synthetic host row in lobby only", () => {
     const g = gameViewToGameState(minimalView())
     expect(g.players[0]?.id).toBe(LETTERBOX_HOST_ROW_ID)
     expect(g.players[0]?.isHost).toBe(true)
+  })
+
+  it("does not add synthetic host row when game is finished", () => {
+    const g = gameViewToGameState(
+      minimalView({
+        status: "finished",
+        players: [
+          {
+            id: "p1" as Id<"players">,
+            name: "oyindamola",
+            score: 10,
+            connected: true,
+          },
+        ],
+      }),
+    )
+    expect(g.players.some((p) => p.id === LETTERBOX_HOST_ROW_ID)).toBe(false)
+    expect(g.players.some((p) => p.name === "oyindamola")).toBe(true)
   })
 })
 

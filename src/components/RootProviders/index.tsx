@@ -3,15 +3,17 @@ import { Toaster } from "sonner"
 import type { IRootProvidersProps } from "./@types"
 import { BeforeUnloadPlayerLeave } from "@/components/BeforeUnloadPlayerLeave"
 import { ConvexConnectionPill } from "@/components/ConvexConnectionPill"
+import { WebHapticsProvider } from "@/components/WebHapticsProvider"
 import { ToastProvider } from "@/components/ui/toast"
 
 export function RootProviders({ children }: IRootProvidersProps) {
   return (
     <ToastProvider>
-      <BeforeUnloadPlayerLeave />
-      <ConvexConnectionPill />
-      {children}
-      <Toaster
+      <WebHapticsProvider>
+        <BeforeUnloadPlayerLeave />
+        <ConvexConnectionPill />
+        {children}
+        <Toaster
         position="bottom-right"
         theme="light"
         toastOptions={{
@@ -25,6 +27,7 @@ export function RootProviders({ children }: IRootProvidersProps) {
         }}
         className="z-[100]"
       />
+      </WebHapticsProvider>
     </ToastProvider>
   )
 }

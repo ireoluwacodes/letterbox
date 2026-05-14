@@ -2,6 +2,7 @@ import { cva } from "class-variance-authority"
 
 import type { IKeyboardKeyProps, TKeyboardKeyState } from "./@types"
 import { cn } from "@/lib/utils"
+import { useHapticsTap } from "@/lib/webHapticsContext"
 
 const keyVariants = cva(
   "flex h-14 w-14 items-center justify-center rounded-none border-[3px] border-foreground font-mono text-lg font-bold transition-[transform,box-shadow] duration-[80ms] ease-linear",
@@ -36,6 +37,7 @@ export function KeyboardKey({
   disabled,
   onPick,
 }: IKeyboardKeyProps) {
+  const haptics = useHapticsTap()
   if (!letter) {
     return <span className="h-14 w-14 shrink-0" aria-hidden />
   }
@@ -49,7 +51,10 @@ export function KeyboardKey({
       disabled={!clickable}
       className={cn(keyVariants({ state: visual }))}
       onClick={() => {
-        if (clickable) onPick(letter)
+        if (clickable) {
+          haptics?.tap("selection")
+          onPick(letter)
+        }
       }}
     >
       {letter}
