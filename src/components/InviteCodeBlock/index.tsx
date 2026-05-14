@@ -1,17 +1,27 @@
 import { ClipboardCopyIcon, Link01Icon } from "@hugeicons/core-free-icons"
+import { toast } from "sonner"
 
 import type { IInviteCodeBlockProps } from "./@types"
 import { BrutalButton } from "@/components/BrutalButton"
 import { BrutalIcon } from "@/components/BrutalIcon"
 
 export function InviteCodeBlock({ code }: IInviteCodeBlockProps) {
-  async function copyCode() {
-    await navigator.clipboard.writeText(code)
+  async function copyToClipboard(text: string, successMessage: string) {
+    try {
+      await navigator.clipboard.writeText(text)
+      toast.success(successMessage)
+    } catch {
+      toast.error("couldn't copy")
+    }
   }
 
-  async function copyLink() {
+  function copyCode() {
+    void copyToClipboard(code, "code copied")
+  }
+
+  function copyLink() {
     const url = `${window.location.origin}/join?code=${encodeURIComponent(code)}`
-    await navigator.clipboard.writeText(url)
+    void copyToClipboard(url, "link copied")
   }
 
   return (
@@ -30,7 +40,7 @@ export function InviteCodeBlock({ code }: IInviteCodeBlockProps) {
         type="button"
         size="brutal-sm"
         className="inline-flex items-center gap-2"
-        onClick={() => void copyCode()}
+        onClick={copyCode}
       >
         <BrutalIcon icon={ClipboardCopyIcon} size={20} />
         copy
@@ -39,7 +49,7 @@ export function InviteCodeBlock({ code }: IInviteCodeBlockProps) {
         type="button"
         size="brutal-sm"
         className="inline-flex items-center gap-2"
-        onClick={() => void copyLink()}
+        onClick={copyLink}
       >
         <BrutalIcon icon={Link01Icon} size={20} />
         link

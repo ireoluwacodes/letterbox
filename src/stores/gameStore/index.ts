@@ -1,8 +1,10 @@
 import { create } from "zustand"
 
-import type { TGameState, TGuessResult } from "@/shared/schemas"
+import type { TPublicGame } from "@/shared/apiTypes"
+import type { TGuessResult } from "@/shared/schemas"
 
 import type { IGameStoreState, TGameStore, TLastGuess } from "./@types"
+import { publicGameToGameState } from "@/lib/publicGameAdapter"
 
 const initial: IGameStoreState = {
   game: null,
@@ -14,6 +16,7 @@ const initial: IGameStoreState = {
   pausedOverlay: false,
   pauseCountdownMs: null,
   categoryCompleteHoldUntil: null,
+  finishedEvent: null,
 }
 
 function trimGuesses(list: Array<TLastGuess>): Array<TLastGuess> {
@@ -23,18 +26,27 @@ function trimGuesses(list: Array<TLastGuess>): Array<TLastGuess> {
 export const useGameStore = create<TGameStore>((set, get) => ({
   ...initial,
 
-  setGameState: (game: TGameState) =>
-    set((s) => ({
-      game,
-      youArePlayerId:
-        game.selfPlayerId !== undefined ? game.selfPlayerId : s.youArePlayerId,
-      youAreHost:
-        game.selfPlayerId != null
-          ? Boolean(
-              game.players.find((p) => p.id === game.selfPlayerId && p.isHost)
-            )
-          : s.youAreHost,
-    })),
+  setGameStateFromServer: (publicGame: TPublicGame) =>
+    set((s) => {
+      let nextYouId = s.youArePlayerId
+      if (nextYouId == null && s.youAreHost) {
+        const hostFromServer =
+          publicGame.hostId ?? publicGame.hostPlayerId
+        if (hostFromServer != null && hostFromServer !== "") {
+          nextYouId = hostFromServer
+        } else if (publicGame.players.length === 1) {
+          nextYouId = publicGame.players[0]?.id ?? null
+        }
+      }
+      const game = publicGameToGameState(publicGame, {
+        youArePlayerId: nextYouId,
+        youAreHost: s.youAreHost,
+      })
+      return {
+        game,
+        youArePlayerId: nextYouId,
+      }
+    }),
 
   setIdentity: (youArePlayerId, youAreHost) =>
     set({ youArePlayerId, youAreHost }),
@@ -47,10 +59,12 @@ export const useGameStore = create<TGameStore>((set, get) => ({
     const prevPlayer = guessHistoryByCategory[pid] ?? {}
     let nextCat = { ...prevPlayer }
 
-    if (result.outcome === "hit" && result.pointsEarned != null) {
+    const isHit = result.hits > 0
+    const pointsEarned = result.pointsAwarded
+    if (isHit && pointsEarned > 0) {
       nextCat = {
         ...nextCat,
-        [categoryName]: (nextCat[categoryName] ?? 0) + result.pointsEarned,
+        [categoryName]: (nextCat[categoryName] ?? 0) + pointsEarned,
       }
     }
 
@@ -60,36 +74,20 @@ export const useGameStore = create<TGameStore>((set, get) => ({
     }
 
     set((s) => {
-      const nextFlash = new Set(s.flashingIndices)
-      if (result.revealedIndices?.length) {
-        for (const i of result.revealedIndices) nextFlash.add(i)
-      }
       const g = s.game
       return {
         guessHistoryByCategory: nextHistory,
-        flashingIndices: nextFlash,
         game: g
           ? {
               ...g,
               letterGuessState: {
                 ...g.letterGuessState,
-                [result.letter.toUpperCase()]: result.outcome,
+                [result.letter.toUpperCase()]: isHit ? "hit" : "miss",
               },
             }
           : null,
       }
     })
-
-    if (result.revealedIndices?.length) {
-      const indices = result.revealedIndices
-      setTimeout(() => {
-        set((s) => {
-          const next = new Set(s.flashingIndices)
-          for (const i of indices) next.delete(i)
-          return { flashingIndices: next }
-        })
-      }, 80)
-    }
   },
 
   pushLastGuess: (guess) =>
@@ -128,4 +126,49 @@ export const useGameStore = create<TGameStore>((set, get) => ({
           }
         : {}
     ),
+
+  setFinishedEvent: (payload) =>
+    set((s) => {
+      if (payload == null) {
+        return { finishedEvent: null }
+      }
+      const g = s.game
+      if (g == null) {
+        return { finishedEvent: payload }
+      }
+      const byId = new Map(payload.finalScores.map((p) => [p.id, p]))
+      const players = g.players.map((p) => {
+        const fs = byId.get(p.id)
+        if (fs == null) return p
+        return {
+          ...p,
+          score: fs.score,
+          connected: fs.connected,
+        }
+      })
+      return {
+        finishedEvent: payload,
+        game: {
+          ...g,
+          status: "finished",
+          players,
+        },
+      }
+    }),
+
+  setHostLobbyFromCreateAck: (input) =>
+    set(() => ({
+      game: {
+        gameId: input.gameId,
+        inviteCode: input.inviteCode,
+        status: "lobby",
+        pointsPerLetter: input.pointsPerLetter,
+        players: [],
+        categories: input.categoryNames.map((name) => ({ name })),
+        currentCategoryIndex: 0,
+        turnOrder: [],
+        currentPlayerId: null,
+        turnDeadline: null,
+      },
+    })),
 }))

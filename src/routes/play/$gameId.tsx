@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router"
-import { useCallback, useEffect } from "react"
+import { useCallback, useEffect, useLayoutEffect } from "react"
 
+import type { TSocketAckVoid } from "@/shared/socketEvents"
 import { BrutalButton } from "@/components/BrutalButton"
 import { HostUnmaskedStrip } from "@/components/HostUnmaskedStrip"
 import { KeyboardGrid } from "@/components/KeyboardGrid"
@@ -11,10 +12,12 @@ import { Timer } from "@/components/Timer"
 import { TurnPanel } from "@/components/TurnPanel"
 import { useGameSocket } from "@/hooks/useGameSocket"
 import { useKeyboardInput } from "@/hooks/useKeyboardInput"
+import { useRecoverSocketSessionForRoute } from "@/hooks/useRecoverSocketSessionForRoute"
 import { useCountdown } from "@/hooks/useCountdown"
 import { SOCKET_EVENTS } from "@/shared/socketEvents"
 import { useGameStore } from "@/stores/gameStore"
 import { useSocketStore } from "@/stores/socketStore"
+import { useToastStore } from "@/stores/toastStore"
 
 export const Route = createFileRoute("/play/$gameId")({
   component: PlayPage,
@@ -31,11 +34,12 @@ function PlayPage() {
   const paused = useGameStore((s) => s.pausedOverlay)
   const emit = useSocketStore((s) => s.emit)
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     useSocketStore.getState().connect()
   }, [])
 
   useGameSocket(gameId)
+  useRecoverSocketSessionForRoute(gameId)
 
   useEffect(() => {
     if (game?.status === "finished") {
@@ -72,9 +76,13 @@ function PlayPage() {
       if (!yourTurn) return
       const L = letter.toUpperCase()
       if (Object.hasOwn(letters, L)) return
-      emit(SOCKET_EVENTS.PLAYER_GUESS, { letter: L }, () => {})
+      emit(SOCKET_EVENTS.PLAYER_GUESS, { gameId, letter: L }, (res: TSocketAckVoid) => {
+        if (!res.ok) {
+          useToastStore.getState().push(res.message.toLowerCase(), 2000)
+        }
+      })
     },
-    [emit, letters, yourTurn]
+    [emit, gameId, letters, yourTurn]
   )
 
   useKeyboardInput(onGuess, yourTurn)
@@ -100,7 +108,18 @@ function PlayPage() {
               type="button"
               size="brutal-sm"
               onClick={() => {
-                emit(SOCKET_EVENTS.HOST_END_GAME, () => {})
+                const gid = game?.gameId ?? gameId
+                emit(
+                  SOCKET_EVENTS.HOST_END_GAME,
+                  { gameId: gid },
+                  (res: TSocketAckVoid) => {
+                    if (!res.ok) {
+                      useToastStore
+                        .getState()
+                        .push(res.message.toLowerCase(), 2500)
+                    }
+                  }
+                )
               }}
             >
               end game
@@ -117,6 +136,7 @@ function PlayPage() {
         <div className="lg:col-span-1">
           <TurnPanel
             players={game?.players ?? []}
+            turnOrder={game?.turnOrder ?? []}
             currentPlayerId={game?.currentPlayerId ?? null}
             youArePlayerId={youId}
           />

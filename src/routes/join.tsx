@@ -1,14 +1,17 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router"
 import { useForm } from "@tanstack/react-form"
-import { useState } from "react"
+import { useLayoutEffect, useState } from "react"
 import { z } from "zod"
 
+import type { TSocketAckJoin } from "@/shared/socketEvents"
 import { BrutalButton } from "@/components/BrutalButton"
 import { BrutalCard } from "@/components/BrutalCard"
 import { Input } from "@/components/ui/input"
 import { gameExists } from "@/lib/api"
+import { savePlayerSocketSession } from "@/lib/socketSession"
 import { JoinPayloadSchema } from "@/shared/schemas"
 import { SOCKET_EVENTS } from "@/shared/socketEvents"
+import { useGameStore } from "@/stores/gameStore"
 import { useSocketStore } from "@/stores/socketStore"
 
 const joinSearchSchema = z.object({
@@ -28,6 +31,10 @@ function JoinPage() {
   const search = Route.useSearch()
   const [submitError, setSubmitError] = useState<string | null>(null)
 
+  useLayoutEffect(() => {
+    useSocketStore.getState().connect()
+  }, [])
+
   const form = useForm({
     defaultValues: {
       code: (search.code ?? "").toUpperCase().slice(0, 6),
@@ -36,7 +43,7 @@ function JoinPage() {
     onSubmit: async ({ value }) => {
       setSubmitError(null)
       const parsed = JoinPayloadSchema.safeParse({
-        code: value.code,
+        inviteCode: value.code,
         name: value.name.trim(),
       })
       if (!parsed.success) {
@@ -44,7 +51,7 @@ function JoinPage() {
         return
       }
 
-      const exists = await gameExists(parsed.data.code)
+      const exists = await gameExists(parsed.data.inviteCode)
       if (!exists.ok) {
         setSubmitError(
           exists.reason === "full"
@@ -58,44 +65,37 @@ function JoinPage() {
 
       const socketStore = useSocketStore.getState()
       socketStore.connect()
-      const sock = socketStore.socket
-      if (!sock) {
+      if (!socketStore.socket) {
         setSubmitError("could not connect.")
         return
       }
 
       try {
-        await new Promise<void>((resolve, reject) => {
-          if (sock.connected) {
-            resolve()
-            return
-          }
-          const onOk = () => {
-            sock.off("connect_error", onErr)
-            resolve()
-          }
-          const onErr = () => {
-            sock.off("connect", onOk)
-            reject(new Error("connect"))
-          }
-          sock.once("connect", onOk)
-          sock.once("connect_error", onErr)
-        })
-      } catch {
-        setSubmitError("could not connect.")
+        await socketStore.waitForSocketConnected()
+      } catch (e) {
+        const fromStore = useSocketStore.getState().connectionError
+        const fromErr = e instanceof Error ? e.message : null
+        setSubmitError((fromStore ?? fromErr ?? "could not connect.").toLowerCase())
         return
       }
 
       const s2 = useSocketStore.getState().socket
-      if (!s2?.connected) return
+      if (!s2) {
+        setSubmitError("could not connect.")
+        return
+      }
 
-      s2.emit(SOCKET_EVENTS.PLAYER_JOIN, parsed.data, (err, res) => {
-        if (err || !res?.gameId) {
-          setSubmitError(
-            err instanceof Error ? err.message.toLowerCase() : "join failed."
-          )
+      s2.emit(SOCKET_EVENTS.PLAYER_JOIN, parsed.data, (res: TSocketAckJoin) => {
+        if (!res.ok) {
+          setSubmitError(res.message.toLowerCase())
           return
         }
+        useGameStore.getState().setIdentity(res.playerId, false)
+        savePlayerSocketSession({
+          gameId: res.gameId,
+          inviteCode: parsed.data.inviteCode,
+          name: parsed.data.name,
+        })
         void navigate({
           to: "/lobby/$gameId",
           params: { gameId: res.gameId },

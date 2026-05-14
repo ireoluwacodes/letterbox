@@ -1,11 +1,29 @@
 import type { ITurnPanelProps } from "./@types"
 import { BrutalCard } from "@/components/BrutalCard"
 
-function nextPlayer(
+function playerName(
   players: ITurnPanelProps["players"],
+  id: string | undefined
+): string | null {
+  if (!id) return null
+  return players.find((p) => p.id === id)?.name ?? null
+}
+
+/** Next guesser after `currentId`, using server `turnOrder` when provided */
+function nextTurnName(
+  players: ITurnPanelProps["players"],
+  turnOrder: Array<string>,
   currentId: string | null
 ): string | null {
   if (!players.length) return null
+  if (turnOrder.length > 0) {
+    if (!currentId) {
+      return playerName(players, turnOrder[0])
+    }
+    const i = turnOrder.indexOf(currentId)
+    const from = i < 0 ? 0 : (i + 1) % turnOrder.length
+    return playerName(players, turnOrder[from])
+  }
   if (!currentId) return players[0]?.name ?? null
   const idx = players.findIndex((p) => p.id === currentId)
   if (idx < 0) return players[0]?.name ?? null
@@ -14,6 +32,7 @@ function nextPlayer(
 
 export function TurnPanel({
   players,
+  turnOrder,
   currentPlayerId,
   youArePlayerId,
 }: ITurnPanelProps) {
@@ -21,7 +40,7 @@ export function TurnPanel({
   const currentLabel =
     (current?.name ?? "—").toLowerCase() +
     (current?.id === youArePlayerId ? " (you)" : "")
-  const nextName = nextPlayer(players, currentPlayerId)
+  const nextName = nextTurnName(players, turnOrder, currentPlayerId)
 
   return (
     <BrutalCard interactive={false} className="flex flex-col gap-4">

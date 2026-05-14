@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router"
-import { useEffect, useMemo } from "react"
+import { useLayoutEffect, useMemo } from "react"
 
 import { BrutalButton } from "@/components/BrutalButton"
 import { BrutalCard } from "@/components/BrutalCard"
@@ -7,6 +7,7 @@ import { EmptyState } from "@/components/EmptyState"
 import { Scoreboard } from "@/components/Scoreboard"
 import { REPLAY_SESSION_KEY } from "@/lib/constants"
 import { useGameSocket } from "@/hooks/useGameSocket"
+import { useRecoverSocketSessionForRoute } from "@/hooks/useRecoverSocketSessionForRoute"
 import { useGameStore } from "@/stores/gameStore"
 import { useSocketStore } from "@/stores/socketStore"
 
@@ -21,14 +22,24 @@ function OverPage() {
   const youHost = useGameStore((s) => s.youAreHost)
   const youId = useGameStore((s) => s.youArePlayerId)
   const guessHistoryByCategory = useGameStore((s) => s.guessHistoryByCategory)
+  const finishedEvent = useGameStore((s) => s.finishedEvent)
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     useSocketStore.getState().connect()
   }, [])
 
   useGameSocket(gameId)
+  useRecoverSocketSessionForRoute(gameId)
 
   const headline = useMemo(() => {
+    if (finishedEvent?.tied) {
+      const sorted = [...finishedEvent.finalScores].sort(
+        (a, b) => b.score - a.score
+      )
+      const top = sorted[0]?.score ?? 0
+      const winners = sorted.filter((p) => p.score === top)
+      return `tied at ${top} — ${winners.map((w) => w.name.toLowerCase()).join(" & ")}`
+    }
     if (!game?.players.length) return "game over"
     const sorted = [...game.players].sort((a, b) => b.score - a.score)
     const top = sorted[0]?.score ?? 0
@@ -37,12 +48,15 @@ function OverPage() {
       return `${winners[0].name.toLowerCase()} wins with ${winners[0].score}`
     }
     return `tied at ${top} — ${winners.map((w) => w.name.toLowerCase()).join(" & ")}`
-  }, [game?.players])
+  }, [game?.players, finishedEvent])
 
   function playAgain() {
     if (!game) return
     const payload = {
-      hostName: game.players.find((p) => p.isHost)?.name ?? "",
+      hostName:
+        game.hostName?.trim() ||
+        game.players.find((p) => p.isHost)?.name ||
+        "",
       pointsPerLetter: game.pointsPerLetter,
       categories: game.categories.map((c) => ({
         name: c.name,
@@ -55,7 +69,7 @@ function OverPage() {
     void navigate({ to: "/host/setup" })
   }
 
-  if (game?.status === "playing") {
+  if (game?.status === "playing" && finishedEvent == null) {
     return (
       <div className="mx-auto max-w-[600px] px-6 py-20">
         <EmptyState message="this round is still in progress." />

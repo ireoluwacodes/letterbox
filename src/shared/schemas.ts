@@ -1,6 +1,8 @@
 import { z } from "zod"
 
-/** Letters + spaces; accepts typing case-insensitive, normalized to for wire format */
+import type { TGuessResultEvent } from "@/shared/apiTypes"
+
+/** Letters + spaces; server allows 2–30 chars */
 const WORD_REGEX = /^[A-Za-z ]+$/
 
 export const PlayerSchema = z.object({
@@ -8,6 +10,7 @@ export const PlayerSchema = z.object({
   name: z.string(),
   score: z.number(),
   connected: z.boolean(),
+  joinedAt: z.number().optional(),
   isHost: z.boolean().optional(),
 })
 
@@ -22,9 +25,11 @@ export const MaskedSlotSchema = z.discriminatedUnion("kind", [
 ])
 
 export const CategorySchema = z.object({
-  name: z.string().min(1).max(40),
+  name: z.string().min(1).max(30),
   word: z
     .string()
+    .min(2)
+    .max(30)
     .regex(WORD_REGEX, "letters and single spaces only")
     .transform((w) => w.toUpperCase()),
 })
@@ -36,6 +41,7 @@ export const GameStatusSchema = z.enum([
   "finished",
 ])
 
+/** Normalized game shape used by UI (derived from server `PublicGame`) */
 export const GameStateSchema = z.object({
   gameId: z.string(),
   inviteCode: z.string(),
@@ -48,14 +54,17 @@ export const GameStateSchema = z.object({
     })
   ),
   currentCategoryIndex: z.number(),
+  /** Server guessing order; "next up" follows this, not `players` list order */
+  turnOrder: z.array(z.string()),
   currentPlayerId: z.string().nullable(),
   turnDeadline: z.number().nullable(),
   maskedSlots: z.array(MaskedSlotSchema).optional(),
   letterGuessState: z.record(z.string(), z.enum(["hit", "miss"])).optional(),
-  /** Full word for host-only strip; omit for players */
   hostWord: z.string().optional(),
-  /** Socket session identity when provided by server */
   selfPlayerId: z.string().optional(),
+  /** From `game:state`; prefer over inferring host from `youArePlayerId` */
+  hostId: z.string().optional(),
+  hostName: z.string().optional(),
 })
 
 export const CreateGamePayloadSchema = z.object({
@@ -65,7 +74,7 @@ export const CreateGamePayloadSchema = z.object({
 })
 
 export const JoinPayloadSchema = z.object({
-  code: z
+  inviteCode: z
     .string()
     .length(6)
     .regex(/^[A-Z0-9]+$/i)
@@ -73,20 +82,13 @@ export const JoinPayloadSchema = z.object({
   name: z.string().min(1).max(20),
 })
 
-export const GuessPayloadSchema = z.object({
+export const GuessEmitSchema = z.object({
+  gameId: z.string().min(1),
   letter: z
     .string()
     .length(1)
-    .regex(/^[A-Z]$/i),
-})
-
-export const GuessResultSchema = z.object({
-  playerId: z.string(),
-  playerName: z.string(),
-  letter: z.string(),
-  outcome: z.enum(["hit", "miss"]),
-  pointsEarned: z.number().optional(),
-  revealedIndices: z.array(z.number()).optional(),
+    .regex(/^[A-Za-z]$/)
+    .transform((c) => c.toUpperCase()),
 })
 
 export type TGameStatus = z.infer<typeof GameStatusSchema>
@@ -95,8 +97,9 @@ export type TMaskedSlot = z.infer<typeof MaskedSlotSchema>
 export type TGameState = z.infer<typeof GameStateSchema>
 export type TCreateGamePayload = z.infer<typeof CreateGamePayloadSchema>
 export type TJoinPayload = z.infer<typeof JoinPayloadSchema>
-export type TGuessPayload = z.infer<typeof GuessPayloadSchema>
-export type TGuessResult = z.infer<typeof GuessResultSchema>
+export type TGuessEmitPayload = z.infer<typeof GuessEmitSchema>
 export type TCategoryInput = z.infer<typeof CategorySchema>
+
+export type TGuessResult = TGuessResultEvent
 
 export { WORD_REGEX }

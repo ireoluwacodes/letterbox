@@ -32,8 +32,7 @@ export function LobbyPlayerList({
               <span className="min-w-0 flex-1 truncate">{p.name}</span>
               {p.isHost ? (
                 <span className="text-[14px] font-bold">host</span>
-              ) : null}
-              {p.id === youArePlayerId ? (
+              ) : p.id === youArePlayerId ? (
                 <span className="text-[14px] font-bold">you</span>
               ) : null}
             </li>

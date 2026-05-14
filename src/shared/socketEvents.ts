@@ -1,18 +1,33 @@
 import type {
-  TCreateGamePayload,
-  TGameState,
-  TGuessPayload,
-  TGuessResult,
-  TJoinPayload,
-} from "@/shared/schemas"
+  TAckErr,
+  TAckJoinOk,
+  TAckOkCreateGame,
+  TAckVoidOk,
+  TGameCategoryCompletedEvent,
+  TGameFinishedEvent,
+  TGameNextCategoryEvent,
+  TGamePausedEvent,
+  TGameStartedEvent,
+  TGameTurnSkippedEvent,
+  TGuessResultEvent,
+  TPublicGame,
+  TPublicPlayer,
+} from "@/shared/apiTypes"
+
+import type { TCreateGamePayload, TGuessEmitPayload, TJoinPayload } from "@/shared/schemas"
 
 export const SOCKET_EVENTS = {
   HOST_CREATE_GAME: "host:create_game",
-  PLAYER_JOIN: "player:join",
   HOST_START: "host:start_game",
-  PLAYER_GUESS: "player:guess",
+  HOST_RECONNECT: "host:reconnect",
   HOST_END_GAME: "host:end_game",
+  PLAYER_JOIN: "player:join",
+  PLAYER_GUESS: "player:guess",
+  PLAYER_LEAVE: "player:leave",
   GAME_STATE: "game:state",
+  GAME_PLAYER_JOINED: "game:player_joined",
+  GAME_PLAYER_LEFT: "game:player_left",
+  GAME_STARTED: "game:started",
   GAME_GUESS_RESULT: "game:guess_result",
   GAME_TURN_CHANGED: "game:turn_changed",
   GAME_TURN_SKIPPED: "game:turn_skipped",
@@ -21,66 +36,67 @@ export const SOCKET_EVENTS = {
   GAME_FINISHED: "game:finished",
   GAME_PAUSED: "game:paused",
   GAME_RESUMED: "game:resumed",
-  GAME_ERROR: "game:error",
 } as const
 
+export type TSocketAckCreateGame = TAckOkCreateGame | TAckErr
+export type TSocketAckJoin = TAckJoinOk | TAckErr
+export type TSocketAckVoid = TAckVoidOk | TAckErr
+
+/** Payload for `game:turn_changed` — fires after every guess (hit or miss). Authoritative for whose turn it is. */
 export interface ITurnChangedPayload {
-  currentPlayerId: string | null
-  turnDeadline: number | null
+  currentPlayerId: string
+  turnDeadline: number
 }
 
-export interface ITurnSkippedPayload {
+export interface IPlayerJoinedPayload {
+  player: TPublicPlayer
+}
+
+export interface IPlayerLeftPayload {
   playerId: string
-  playerName: string
-  letter?: string
-}
-
-export interface ICategoryCompletedPayload {
-  word: string
-}
-
-export interface IGameFinishedPayload {
-  gameId: string
-}
-
-export interface IGamePausedPayload {
-  hostDisconnected: boolean
-  resumeDeadline?: number | null
-}
-
-export interface IGameErrorPayload {
-  message: string
-  fatal?: boolean
 }
 
 export interface IServerToClientEvents {
-  [SOCKET_EVENTS.GAME_STATE]: (payload: TGameState) => void
-  [SOCKET_EVENTS.GAME_GUESS_RESULT]: (payload: TGuessResult) => void
+  [SOCKET_EVENTS.GAME_STATE]: (payload: TPublicGame) => void
+  [SOCKET_EVENTS.GAME_PLAYER_JOINED]: (payload: IPlayerJoinedPayload) => void
+  [SOCKET_EVENTS.GAME_PLAYER_LEFT]: (payload: IPlayerLeftPayload) => void
+  [SOCKET_EVENTS.GAME_STARTED]: (payload: TGameStartedEvent) => void
+  [SOCKET_EVENTS.GAME_GUESS_RESULT]: (payload: TGuessResultEvent) => void
   [SOCKET_EVENTS.GAME_TURN_CHANGED]: (payload: ITurnChangedPayload) => void
-  [SOCKET_EVENTS.GAME_TURN_SKIPPED]: (payload: ITurnSkippedPayload) => void
+  [SOCKET_EVENTS.GAME_TURN_SKIPPED]: (payload: TGameTurnSkippedEvent) => void
   [SOCKET_EVENTS.GAME_CATEGORY_COMPLETED]: (
-    payload: ICategoryCompletedPayload
+    payload: TGameCategoryCompletedEvent
   ) => void
-  [SOCKET_EVENTS.GAME_NEXT_CATEGORY]: () => void
-  [SOCKET_EVENTS.GAME_FINISHED]: (payload: IGameFinishedPayload) => void
-  [SOCKET_EVENTS.GAME_PAUSED]: (payload: IGamePausedPayload) => void
-  [SOCKET_EVENTS.GAME_RESUMED]: () => void
-  [SOCKET_EVENTS.GAME_ERROR]: (payload: IGameErrorPayload) => void
+  [SOCKET_EVENTS.GAME_NEXT_CATEGORY]: (payload: TGameNextCategoryEvent) => void
+  [SOCKET_EVENTS.GAME_FINISHED]: (payload: TGameFinishedEvent) => void
+  [SOCKET_EVENTS.GAME_PAUSED]: (payload: TGamePausedEvent) => void
+  [SOCKET_EVENTS.GAME_RESUMED]: (payload: Record<string, never>) => void
 }
 
 export interface IClientToServerEvents {
   [SOCKET_EVENTS.HOST_CREATE_GAME]: (
     payload: TCreateGamePayload,
-    ack: (err: Error | null, res?: { gameId: string }) => void
+    ack: (res: TSocketAckCreateGame) => void
+  ) => void
+  [SOCKET_EVENTS.HOST_START]: (
+    payload: { gameId: string },
+    ack: (res: TSocketAckVoid) => void
+  ) => void
+  [SOCKET_EVENTS.HOST_RECONNECT]: (
+    payload: { gameId: string },
+    ack: (res: TSocketAckVoid) => void
+  ) => void
+  [SOCKET_EVENTS.HOST_END_GAME]: (
+    payload: { gameId: string },
+    ack: (res: TSocketAckVoid) => void
   ) => void
   [SOCKET_EVENTS.PLAYER_JOIN]: (
     payload: TJoinPayload,
-    ack: (err: Error | null, res?: { gameId: string }) => void
+    ack: (res: TSocketAckJoin) => void
   ) => void
-  [SOCKET_EVENTS.HOST_START]: (ack: (err: Error | null) => void) => void
   [SOCKET_EVENTS.PLAYER_GUESS]: (
-    payload: TGuessPayload,
-    ack: (err: Error | null) => void
+    payload: TGuessEmitPayload,
+    ack: (res: TSocketAckVoid) => void
   ) => void
-  [SOCKET_EVENTS.HOST_END_GAME]: (ack: (err: Error | null) => void) => void
+  [SOCKET_EVENTS.PLAYER_LEAVE]: (payload: { gameId: string }) => void
 }

@@ -65,8 +65,8 @@ function LandingPage() {
           letterbox
         </h1>
         <p className="mx-auto mt-6 max-w-xl text-center text-base leading-relaxed font-medium">
-          The host writes secret words. Everyone else takes turns guessing
-          letters until each word is revealed
+          The host writes secret words. Players take turns guessing one letter
+          at a time, rotating in order until each word is revealed
         </p>
       </div>
 

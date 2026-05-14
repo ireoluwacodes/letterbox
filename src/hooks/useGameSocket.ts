@@ -1,6 +1,7 @@
 import { useNavigate } from "@tanstack/react-router"
 import { useEffect } from "react"
 
+import { clearSocketSession } from "@/lib/socketSession"
 import { SOCKET_EVENTS } from "@/shared/socketEvents"
 import { useGameStore } from "@/stores/gameStore"
 import { useSocketStore } from "@/stores/socketStore"
@@ -14,37 +15,35 @@ export function useGameSocket(gameId: string): void {
   useEffect(() => {
     if (!socket || !connected) return
 
-    socket.on(SOCKET_EVENTS.GAME_STATE, (payload) => {
-      useGameStore.getState().setGameState(payload)
-    })
-
+    /** Letter outcome only (keyboard, last guesses, toasts). Turn UI must follow `game:turn_changed`, not hits/miss here. */
     socket.on(SOCKET_EVENTS.GAME_GUESS_RESULT, (payload) => {
       const g = useGameStore.getState().game
       const cat = g ? (g.categories[g.currentCategoryIndex]?.name ?? "?") : "?"
       useGameStore.getState().applyGuessResult(payload, cat)
+      const name =
+        g?.players.find((p) => p.id === payload.playerId)?.name ?? "player"
       const pts =
-        payload.outcome === "hit"
-          ? (payload.pointsEarned ?? 0)
-          : ("miss" as const)
+        payload.hits > 0 ? payload.pointsAwarded : ("miss" as const)
       useGameStore.getState().pushLastGuess({
-        playerName: payload.playerName,
+        playerName: name,
         letter: payload.letter.toLowerCase(),
         points: pts,
       })
       const toast = useToastStore.getState()
-      if (payload.outcome === "hit") {
+      if (payload.hits > 0) {
         toast.push(
-          `${payload.playerName.toLowerCase()} +${payload.pointsEarned ?? 0} for "${payload.letter.toLowerCase()}"`,
+          `${name.toLowerCase()} +${payload.pointsAwarded} for "${payload.letter.toLowerCase()}"`,
           1500
         )
       } else {
         toast.push(
-          `${payload.playerName.toLowerCase()} missed "${payload.letter.toLowerCase()}"`,
+          `${name.toLowerCase()} missed "${payload.letter.toLowerCase()}"`,
           1500
         )
       }
     })
 
+    /** Current guesser + deadline after each guess (hit or miss). */
     socket.on(SOCKET_EVENTS.GAME_TURN_CHANGED, (payload) => {
       useGameStore.setState((s) =>
         s.game
@@ -60,9 +59,14 @@ export function useGameSocket(gameId: string): void {
     })
 
     socket.on(SOCKET_EVENTS.GAME_TURN_SKIPPED, (payload) => {
+      const g = useGameStore.getState().game
+      const name =
+        g?.players.find((p) => p.id === payload.playerId)?.name ?? "player"
+      const reason =
+        payload.reason === "disconnected" ? "disconnected" : "timeout"
       useToastStore
         .getState()
-        .push(`${payload.playerName.toLowerCase()} skipped (timeout)`, 1500)
+        .push(`${name.toLowerCase()} skipped (${reason})`, 1500)
     })
 
     socket.on(SOCKET_EVENTS.GAME_CATEGORY_COMPLETED, (payload) => {
@@ -77,27 +81,22 @@ export function useGameSocket(gameId: string): void {
       useGameStore.getState().setCategoryCompleteHold(null)
     })
 
-    socket.on(SOCKET_EVENTS.GAME_FINISHED, () => {
+    /** `game:finished` then authoritative `game:state` with `status: finished` may follow; both update the store. */
+    socket.on(SOCKET_EVENTS.GAME_FINISHED, (payload) => {
+      useGameStore.getState().setFinishedEvent(payload)
+      clearSocketSession()
       navigate({ to: "/over/$gameId", params: { gameId } })
     })
 
-    socket.on(SOCKET_EVENTS.GAME_PAUSED, (payload) => {
-      useGameStore.getState().setPaused(true, payload.resumeDeadline ?? null)
+    socket.on(SOCKET_EVENTS.GAME_PAUSED, () => {
+      useGameStore.getState().setPaused(true, null)
     })
 
     socket.on(SOCKET_EVENTS.GAME_RESUMED, () => {
       useGameStore.getState().setPaused(false, null)
     })
 
-    socket.on(SOCKET_EVENTS.GAME_ERROR, (payload) => {
-      useToastStore.getState().push(payload.message.toLowerCase(), 3000)
-      if (payload.fatal) {
-        navigate({ to: "/" })
-      }
-    })
-
     return () => {
-      socket.off(SOCKET_EVENTS.GAME_STATE)
       socket.off(SOCKET_EVENTS.GAME_GUESS_RESULT)
       socket.off(SOCKET_EVENTS.GAME_TURN_CHANGED)
       socket.off(SOCKET_EVENTS.GAME_TURN_SKIPPED)
@@ -106,7 +105,6 @@ export function useGameSocket(gameId: string): void {
       socket.off(SOCKET_EVENTS.GAME_FINISHED)
       socket.off(SOCKET_EVENTS.GAME_PAUSED)
       socket.off(SOCKET_EVENTS.GAME_RESUMED)
-      socket.off(SOCKET_EVENTS.GAME_ERROR)
     }
   }, [socket, connected, navigate, gameId])
 }

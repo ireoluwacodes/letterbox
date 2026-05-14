@@ -1,12 +1,14 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router"
-import { useEffect } from "react"
+import { useEffect, useLayoutEffect } from "react"
 
+import type { TSocketAckVoid } from "@/shared/socketEvents"
 import { BrutalButton } from "@/components/BrutalButton"
 import { BrutalCard } from "@/components/BrutalCard"
 import { InviteCodeBlock } from "@/components/InviteCodeBlock"
 import { LobbyPlayerList } from "@/components/LobbyPlayerList"
 import { SOCKET_EVENTS } from "@/shared/socketEvents"
 import { useGameSocket } from "@/hooks/useGameSocket"
+import { useRecoverSocketSessionForRoute } from "@/hooks/useRecoverSocketSessionForRoute"
 import { useGameStore } from "@/stores/gameStore"
 import { useSocketStore } from "@/stores/socketStore"
 
@@ -22,11 +24,12 @@ function LobbyPage() {
   const youHost = useGameStore((s) => s.youAreHost)
   const emit = useSocketStore((s) => s.emit)
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     useSocketStore.getState().connect()
   }, [])
 
   useGameSocket(gameId)
+  useRecoverSocketSessionForRoute(gameId)
 
   useEffect(() => {
     if (game?.status === "playing") {
@@ -77,8 +80,8 @@ function LobbyPage() {
                 }
                 disabled={(game?.players.length ?? 0) < 2}
                 onClick={() => {
-                  emit(SOCKET_EVENTS.HOST_START, (err: Error | null) => {
-                    if (err) console.error(err)
+                  emit(SOCKET_EVENTS.HOST_START, { gameId }, (res: TSocketAckVoid) => {
+                    if (!res.ok) console.error(res.message)
                   })
                 }}
               >

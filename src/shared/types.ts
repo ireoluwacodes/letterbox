@@ -5,7 +5,7 @@ export type {
   TGameState,
   TCreateGamePayload,
   TJoinPayload,
-  TGuessPayload,
+  TGuessEmitPayload,
   TGuessResult,
   TCategoryInput,
 } from "@/shared/schemas"

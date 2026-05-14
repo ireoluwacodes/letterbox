@@ -1,3 +1,4 @@
+import type { TGameFinishedEvent, TPublicGame } from "@/shared/apiTypes"
 import type { TGameState, TGuessResult } from "@/shared/schemas"
 
 export type TLastGuess = {
@@ -18,12 +19,15 @@ export interface IGameStoreState {
   pausedOverlay: boolean
   pauseCountdownMs: number | null
   categoryCompleteHoldUntil: number | null
+  /** Last `game:finished` payload (for over screen ordering / tie) */
+  finishedEvent: TGameFinishedEvent | null
 }
 
 export interface IGameStoreActions {
-  setGameState: (game: TGameState) => void
+  setGameStateFromServer: (game: TPublicGame) => void
   setIdentity: (playerId: string | null, isHost: boolean) => void
   reset: () => void
+  /** From `game:guess_result` — letter UI only; never advances `currentPlayerId` (use `game:turn_changed`). */
   applyGuessResult: (result: TGuessResult, categoryName: string) => void
   pushLastGuess: (guess: TLastGuess) => void
   setFlashingIndices: (indices: Array<number>) => void
@@ -31,6 +35,14 @@ export interface IGameStoreActions {
   setPaused: (paused: boolean, resumeDeadline?: number | null) => void
   setCategoryCompleteHold: (until: number | null) => void
   clearGuessedLetters: () => void
+  setFinishedEvent: (payload: TGameFinishedEvent | null) => void
+  /** Host lobby before first `game:state` (server sends state on first player join). */
+  setHostLobbyFromCreateAck: (input: {
+    gameId: string
+    inviteCode: string
+    pointsPerLetter: number
+    categoryNames: Array<string>
+  }) => void
 }
 
 export type TGameStore = IGameStoreState & IGameStoreActions
