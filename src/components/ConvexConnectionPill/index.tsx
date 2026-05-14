@@ -1,15 +1,37 @@
-import { useConvexConnectionState } from "convex/react"
+import { useEffect, useState } from "react"
 
 import type { IConvexConnectionPillProps } from "./@types"
 import { cn } from "@/lib/utils"
 
+/**
+ * Browser network offline only. Convex `useConvexConnectionState().isWebSocketConnected`
+ * can read false in some prod/SSR/proxy cases while queries still work, which caused a
+ * permanent false "reconnecting" pill — so we do not tie this UI to the WebSocket flag.
+ */
 export function ConvexConnectionPill({ className }: IConvexConnectionPillProps) {
-  const state = useConvexConnectionState()
+  const [mounted, setMounted] = useState(false)
+  const [browserOnline, setBrowserOnline] = useState(true)
 
-  const reconnecting =
-    state.hasEverConnected && !state.isWebSocketConnected
+  useEffect(() => {
+    setMounted(true)
+    setBrowserOnline(navigator.onLine)
 
-  if (!reconnecting) return null
+    function onOnline() {
+      setBrowserOnline(true)
+    }
+    function onOffline() {
+      setBrowserOnline(false)
+    }
+
+    window.addEventListener("online", onOnline)
+    window.addEventListener("offline", onOffline)
+    return () => {
+      window.removeEventListener("online", onOnline)
+      window.removeEventListener("offline", onOffline)
+    }
+  }, [])
+
+  if (!mounted || browserOnline) return null
 
   return (
     <div
@@ -19,7 +41,7 @@ export function ConvexConnectionPill({ className }: IConvexConnectionPillProps) 
       )}
       role="status"
     >
-      reconnecting…
+      offline — reconnect to play.
     </div>
   )
 }
