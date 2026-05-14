@@ -1,4 +1,4 @@
-import type { TLastGuess } from "@/stores/gameStore/@types"
+import type { TLastGuess } from "@/shared/schemas"
 
 export interface ILastGuessesProps {
   guesses: Array<TLastGuess>

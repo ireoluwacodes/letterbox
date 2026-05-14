@@ -102,4 +102,11 @@ export type TCategoryInput = z.infer<typeof CategorySchema>
 
 export type TGuessResult = TGuessResultEvent
 
+/** One row in the play sidebar “last guesses” list */
+export type TLastGuess = {
+  playerName: string
+  letter: string
+  points: number | "miss"
+}
+
 export { WORD_REGEX }
