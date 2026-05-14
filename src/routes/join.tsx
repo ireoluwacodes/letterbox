@@ -1,18 +1,17 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router"
+import { useMutation, useQuery } from "convex/react"
 import { useForm } from "@tanstack/react-form"
-import { useLayoutEffect, useState } from "react"
+import { useState } from "react"
 import { z } from "zod"
 
-import type { TSocketAckJoin } from "@/shared/socketEvents"
+import { api } from "../../convex/_generated/api"
 import { BrutalButton } from "@/components/BrutalButton"
 import { BrutalCard } from "@/components/BrutalCard"
 import { Input } from "@/components/ui/input"
-import { gameExists } from "@/lib/api"
+import { getConvexErrorMessage } from "@/lib/convexErrors"
 import { savePlayerSocketSession } from "@/lib/socketSession"
+import { getSessionId } from "@/lib/session"
 import { JoinPayloadSchema } from "@/shared/schemas"
-import { SOCKET_EVENTS } from "@/shared/socketEvents"
-import { useGameStore } from "@/stores/gameStore"
-import { useSocketStore } from "@/stores/socketStore"
 
 const joinSearchSchema = z.object({
   code: z.string().optional(),
@@ -30,14 +29,20 @@ function JoinPage() {
   const navigate = useNavigate()
   const search = Route.useSearch()
   const [submitError, setSubmitError] = useState<string | null>(null)
+  const [inviteCodeLive, setInviteCodeLive] = useState(
+    (search.code ?? "").toUpperCase().slice(0, 6),
+  )
 
-  useLayoutEffect(() => {
-    useSocketStore.getState().connect()
-  }, [])
+  const joinMutation = useMutation(api.players.join)
+
+  const invitePreview = useQuery(
+    api.games.getByInviteCode,
+    inviteCodeLive.length === 6 ? { inviteCode: inviteCodeLive } : "skip",
+  )
 
   const form = useForm({
     defaultValues: {
-      code: (search.code ?? "").toUpperCase().slice(0, 6),
+      code: inviteCodeLive,
       name: "",
     },
     onSubmit: async ({ value }) => {
@@ -51,56 +56,24 @@ function JoinPage() {
         return
       }
 
-      const exists = await gameExists(parsed.data.inviteCode)
-      if (!exists.ok) {
-        setSubmitError(
-          exists.reason === "full"
-            ? "game is full."
-            : exists.reason === "started"
-              ? "game already started."
-              : "game not found."
-        )
-        return
-      }
-
-      const socketStore = useSocketStore.getState()
-      socketStore.connect()
-      if (!socketStore.socket) {
-        setSubmitError("could not connect.")
-        return
-      }
-
       try {
-        await socketStore.waitForSocketConnected()
-      } catch (e) {
-        const fromStore = useSocketStore.getState().connectionError
-        const fromErr = e instanceof Error ? e.message : null
-        setSubmitError((fromStore ?? fromErr ?? "could not connect.").toLowerCase())
-        return
-      }
-
-      const s2 = useSocketStore.getState().socket
-      if (!s2) {
-        setSubmitError("could not connect.")
-        return
-      }
-
-      s2.emit(SOCKET_EVENTS.PLAYER_JOIN, parsed.data, (res: TSocketAckJoin) => {
-        if (!res.ok) {
-          setSubmitError(res.message.toLowerCase())
-          return
-        }
-        useGameStore.getState().setIdentity(res.playerId, false)
+        const result = await joinMutation({
+          inviteCode: parsed.data.inviteCode,
+          sessionId: getSessionId(),
+          name: parsed.data.name,
+        })
         savePlayerSocketSession({
-          gameId: res.gameId,
+          gameId: String(result.gameId),
           inviteCode: parsed.data.inviteCode,
           name: parsed.data.name,
         })
         void navigate({
           to: "/lobby/$gameId",
-          params: { gameId: res.gameId },
+          params: { gameId: String(result.gameId) },
         })
-      })
+      } catch (e) {
+        setSubmitError(getConvexErrorMessage(e).toLowerCase())
+      }
     },
   })
 
@@ -122,29 +95,39 @@ function JoinPage() {
           <form.Field name="code">
             {(field) => (
               <label className="flex flex-col gap-2">
-                <span className="text-[14px] font-bold">
-                  invite code
-                </span>
+                <span className="text-[14px] font-bold">invite code</span>
                 <Input
                   variant="code"
                   maxLength={6}
                   value={field.state.value}
-                  onChange={(e) =>
-                    field.handleChange(
-                      e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "")
-                    )
-                  }
+                  onChange={(e) => {
+                    const next = e.target.value
+                      .toUpperCase()
+                      .replace(/[^A-Z0-9]/g, "")
+                    field.handleChange(next)
+                    setInviteCodeLive(next)
+                  }}
                 />
               </label>
             )}
           </form.Field>
 
+          {inviteCodeLive.length === 6 && invitePreview != null ? (
+            <p className="font-mono text-xs font-bold">
+              {!invitePreview.exists
+                ? "no game at this code."
+                : invitePreview.status !== "lobby"
+                  ? "game already started."
+                  : invitePreview.playerCount >= invitePreview.maxPlayers
+                    ? "game is full."
+                    : "game found — pick your name."}
+            </p>
+          ) : null}
+
           <form.Field name="name">
             {(field) => (
               <label className="flex flex-col gap-2">
-                <span className="text-[14px] font-bold">
-                  your name
-                </span>
+                <span className="text-[14px] font-bold">your name</span>
                 <Input
                   value={field.state.value}
                   onChange={(e) => field.handleChange(e.target.value)}
@@ -176,7 +159,11 @@ function JoinPage() {
               disabled={
                 code.length !== 6 ||
                 name.trim().length < 1 ||
-                name.trim().length > 20
+                name.trim().length > 20 ||
+                invitePreview === undefined ||
+                !invitePreview.exists ||
+                invitePreview.status !== "lobby" ||
+                invitePreview.playerCount >= invitePreview.maxPlayers
               }
             >
               join →

@@ -1,49 +1,15 @@
-import { useEffect } from "react"
-
 import { Toaster } from "sonner"
-import type { IRootProvidersProps } from "./@types"
-import { ConnectionOverlay } from "@/components/ConnectionOverlay"
-import { ToastProvider } from "@/components/ui/toast"
-import { loadSocketSession } from "@/lib/socketSession"
-import { SOCKET_EVENTS } from "@/shared/socketEvents"
-import { useGameStore } from "@/stores/gameStore"
-import { useSocketStore } from "@/stores/socketStore"
 
+import type { IRootProvidersProps } from "./@types"
+import { BeforeUnloadPlayerLeave } from "@/components/BeforeUnloadPlayerLeave"
+import { ConvexConnectionPill } from "@/components/ConvexConnectionPill"
+import { ToastProvider } from "@/components/ui/toast"
 
 export function RootProviders({ children }: IRootProvidersProps) {
-  const paused = useGameStore((s) => s.pausedOverlay)
-  const hadConnected = useSocketStore((s) => s.hadConnected)
-  const connected = useSocketStore((s) => s.connected)
-  const longDisconnect = useSocketStore((s) => s.longDisconnect)
-
-  useEffect(() => {
-    function onBeforeUnload() {
-      const session = loadSocketSession()
-      if (session?.role !== "player") return
-      const sock = useSocketStore.getState().socket
-      const gameId =
-        useGameStore.getState().game?.gameId ?? session.gameId
-      if (!sock?.connected) return
-      sock.emit(SOCKET_EVENTS.PLAYER_LEAVE, { gameId })
-    }
-
-    window.addEventListener("beforeunload", onBeforeUnload)
-    return () => window.removeEventListener("beforeunload", onBeforeUnload)
-  }, [])
-
-  const showReconnect = hadConnected && !connected && !longDisconnect && !paused
-  const showLost = longDisconnect && !connected && !paused
-
   return (
     <ToastProvider>
-      <ConnectionOverlay
-        showPaused={paused}
-        showReconnect={showReconnect}
-        showLost={showLost}
-        onRetry={() => {
-          useSocketStore.getState().socket?.connect()
-        }}
-      />
+      <BeforeUnloadPlayerLeave />
+      <ConvexConnectionPill />
       {children}
       <Toaster
         position="bottom-right"

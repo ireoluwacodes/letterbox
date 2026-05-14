@@ -1,9 +1,11 @@
 import { HeadContent, Scripts, createRootRoute } from "@tanstack/react-router"
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools"
 import { TanStackDevtools } from "@tanstack/react-devtools"
+import { ConvexProvider } from "convex/react"
 
 import appCss from "../styles.css?url"
 import { RootProviders } from "@/components/RootProviders"
+import { convexReactClient } from "@/lib/convexClient"
 
 export const Route = createRootRoute({
   head: () => ({
@@ -44,7 +46,9 @@ function RootDocument({ children }: { children: React.ReactNode }) {
         <HeadContent />
       </head>
       <body className="min-h-svh lowercase antialiased">
-        <RootProviders>{children}</RootProviders>
+        <ConvexProvider client={convexReactClient}>
+          <RootProviders>{children}</RootProviders>
+        </ConvexProvider>
         <TanStackDevtools
           config={{
             position: "bottom-right",

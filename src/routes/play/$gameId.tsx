@@ -1,7 +1,10 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router"
-import { useCallback, useEffect, useLayoutEffect } from "react"
+import { useMutation, useQuery } from "convex/react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
-import type { TSocketAckVoid } from "@/shared/socketEvents"
+import { api } from "../../../convex/_generated/api"
+import type { Id } from "../../../convex/_generated/dataModel"
+import type { TLastGuess } from "@/shared/schemas"
 import { BrutalButton } from "@/components/BrutalButton"
 import { HostUnmaskedStrip } from "@/components/HostUnmaskedStrip"
 import { KeyboardGrid } from "@/components/KeyboardGrid"
@@ -10,13 +13,13 @@ import { MaskedWord } from "@/components/MaskedWord"
 import { Scoreboard } from "@/components/Scoreboard"
 import { Timer } from "@/components/Timer"
 import { TurnPanel } from "@/components/TurnPanel"
-import { useGameSocket } from "@/hooks/useGameSocket"
-import { useKeyboardInput } from "@/hooks/useKeyboardInput"
-import { useRecoverSocketSessionForRoute } from "@/hooks/useRecoverSocketSessionForRoute"
 import { useCountdown } from "@/hooks/useCountdown"
-import { SOCKET_EVENTS } from "@/shared/socketEvents"
-import { useGameStore } from "@/stores/gameStore"
-import { useSocketStore } from "@/stores/socketStore"
+import { useKeyboardInput } from "@/hooks/useKeyboardInput"
+import { usePresence } from "@/hooks/usePresence"
+import { clearSocketSession } from "@/lib/socketSession"
+import { getConvexErrorMessage } from "@/lib/convexErrors"
+import { gameViewToGameState } from "@/lib/convexViewMapper"
+import { getSessionId } from "@/lib/session"
 import { useToastStore } from "@/stores/toastStore"
 
 export const Route = createFileRoute("/play/$gameId")({
@@ -26,29 +29,149 @@ export const Route = createFileRoute("/play/$gameId")({
 function PlayPage() {
   const { gameId } = Route.useParams()
   const navigate = useNavigate()
-  const game = useGameStore((s) => s.game)
-  const youId = useGameStore((s) => s.youArePlayerId)
-  const youHost = useGameStore((s) => s.youAreHost)
-  const lastGuesses = useGameStore((s) => s.lastGuesses)
-  const flashing = useGameStore((s) => s.flashingIndices)
-  const paused = useGameStore((s) => s.pausedOverlay)
-  const emit = useSocketStore((s) => s.emit)
+  const sessionId = getSessionId()
 
-  useLayoutEffect(() => {
-    useSocketStore.getState().connect()
-  }, [])
+  const raw = useQuery(api.games.getGameView, {
+    gameId: gameId as Id<"games">,
+    sessionId,
+  })
 
-  useGameSocket(gameId)
-  useRecoverSocketSessionForRoute(gameId)
+  const completedCats = useQuery(api.games.getCompletedCategories, {
+    gameId: gameId as Id<"games">,
+  })
+
+  const submitGuess = useMutation(api.guesses.submit)
+  const endGame = useMutation(api.games.endGame)
+  const rejoin = useMutation(api.players.rejoin)
+  const didRejoin = useRef(false)
 
   useEffect(() => {
-    if (game?.status === "finished") {
-      void navigate({ to: "/over/$gameId", params: { gameId } })
-    }
-    if (game?.status === "lobby") {
+    if (didRejoin.current) return
+    didRejoin.current = true
+    void rejoin({ gameId: gameId as Id<"games">, sessionId })
+  }, [gameId, sessionId, rejoin])
+
+  const game = raw != null ? gameViewToGameState(raw) : null
+  const youHost = raw?.viewerRole === "host"
+  const youId =
+    raw?.viewerPlayerId != null ? String(raw.viewerPlayerId) : null
+
+  usePresence(gameId, youHost ? "host" : youId != null ? "player" : null)
+
+  const lastGuesses: Array<TLastGuess> = useMemo(() => {
+    const list = raw?.recentGuesses ?? []
+    const mapped = list.map((g) => ({
+      playerName: g.playerName,
+      letter: g.letter.toLowerCase(),
+      points: g.hits > 0 ? g.pointsAwarded : ("miss" as const),
+    }))
+    return [...mapped].reverse()
+  }, [raw?.recentGuesses])
+
+  const [flashingIndices, setFlashingIndices] = useState(() => new Set<number>())
+
+  const guessSigRef = useRef<string>("")
+  const guessMountedRef = useRef(false)
+  const completedLenRef = useRef<number | null>(null)
+  const pausedRef = useRef(false)
+
+  useEffect(() => {
+    if (raw == null) return
+    if (raw.status === "lobby") {
       void navigate({ to: "/lobby/$gameId", params: { gameId } })
     }
-  }, [game?.status, gameId, navigate])
+    if (raw.status === "finished") {
+      clearSocketSession()
+      void navigate({ to: "/over/$gameId", params: { gameId } })
+    }
+  }, [raw?.status, gameId, navigate, raw])
+
+  useEffect(() => {
+    if (raw == null) return
+    const first = raw.recentGuesses.at(0)
+    const sig =
+      first != null
+        ? `${first.at}:${first.letter}:${first.playerName}`
+        : ""
+    if (!guessMountedRef.current) {
+      guessMountedRef.current = true
+      guessSigRef.current = sig
+      return
+    }
+    if (sig !== "" && sig !== guessSigRef.current && first != null) {
+      guessSigRef.current = sig
+      const toast = useToastStore.getState()
+      const name = first.playerName.toLowerCase()
+      if (first.hits > 0) {
+        toast.push(
+          `${name} +${first.pointsAwarded} for "${first.letter.toLowerCase()}"`,
+          1500,
+        )
+      } else {
+        toast.push(`${name} missed "${first.letter.toLowerCase()}"`, 1500)
+      }
+    }
+  }, [raw?.recentGuesses, raw])
+
+  useEffect(() => {
+    if (completedCats == null) return
+    const n = completedCats.length
+    if (completedLenRef.current === null) {
+      completedLenRef.current = n
+      return
+    }
+    if (n > completedLenRef.current) {
+      const last = completedCats[completedCats.length - 1]
+      if (last.word) {
+        useToastStore
+          .getState()
+          .push(`category complete — ${last.word.toLowerCase()}`, 800)
+      }
+    }
+    completedLenRef.current = n
+  }, [completedCats])
+
+  useEffect(() => {
+    if (raw == null) return
+    if (raw.status === "paused" && !pausedRef.current) {
+      pausedRef.current = true
+      useToastStore.getState().push("paused — host disconnected", 2000)
+    }
+    if (raw.status === "in_progress" && pausedRef.current) {
+      pausedRef.current = false
+      useToastStore.getState().push("resumed", 1200)
+    }
+  }, [raw?.status, raw])
+
+  const prevRevealedRef = useRef<Array<boolean> | null>(null)
+  const prevCategoryOrderRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    const order = raw?.currentCategory?.order
+    if (order !== prevCategoryOrderRef.current) {
+      prevCategoryOrderRef.current = order ?? null
+      prevRevealedRef.current = null
+    }
+  }, [raw?.currentCategory?.order])
+
+  useEffect(() => {
+    const rev = raw?.currentCategory?.revealed
+    if (rev == null) return
+    if (prevRevealedRef.current == null) {
+      prevRevealedRef.current = [...rev]
+      return
+    }
+    const prev = prevRevealedRef.current
+    const indices: Array<number> = []
+    for (let i = 0; i < rev.length; i++) {
+      if (rev[i] && !prev[i]) indices.push(i)
+    }
+    prevRevealedRef.current = [...rev]
+    if (indices.length === 0) return
+    setFlashingIndices(new Set(indices))
+    const t = window.setTimeout(() => setFlashingIndices(new Set()), 400)
+    return () => window.clearTimeout(t)
+  }, [raw?.currentCategory?.revealed])
 
   const deadline = game?.turnDeadline ?? null
   const remaining = useCountdown(deadline)
@@ -64,6 +187,8 @@ function PlayPage() {
       "player")
     : "player"
 
+  const paused = raw?.status === "paused"
+
   const yourTurn =
     Boolean(youId) &&
     game != null &&
@@ -76,16 +201,18 @@ function PlayPage() {
       if (!yourTurn) return
       const L = letter.toUpperCase()
       if (Object.hasOwn(letters, L)) return
-      emit(SOCKET_EVENTS.PLAYER_GUESS, { gameId, letter: L }, (res: TSocketAckVoid) => {
-        if (!res.ok) {
-          useToastStore.getState().push(res.message.toLowerCase(), 2000)
-        }
+      void submitGuess({
+        gameId: gameId as Id<"games">,
+        sessionId,
+        letter: L,
+      }).catch((e) => {
+        useToastStore.getState().push(getConvexErrorMessage(e).toLowerCase(), 2000)
       })
     },
-    [emit, gameId, letters, yourTurn]
+    [yourTurn, letters, submitGuess, gameId, sessionId],
   )
 
-  useKeyboardInput(onGuess, yourTurn)
+  useKeyboardInput(onGuess, yourTurn && !paused)
 
   const catNum = (game?.currentCategoryIndex ?? 0) + 1
   const catTotal = game?.categories.length ?? 0
@@ -108,18 +235,14 @@ function PlayPage() {
               type="button"
               size="brutal-sm"
               onClick={() => {
-                const gid = game?.gameId ?? gameId
-                emit(
-                  SOCKET_EVENTS.HOST_END_GAME,
-                  { gameId: gid },
-                  (res: TSocketAckVoid) => {
-                    if (!res.ok) {
-                      useToastStore
-                        .getState()
-                        .push(res.message.toLowerCase(), 2500)
-                    }
-                  }
-                )
+                void endGame({
+                  gameId: gameId as Id<"games">,
+                  sessionId,
+                }).catch((e) => {
+                  useToastStore
+                    .getState()
+                    .push(getConvexErrorMessage(e).toLowerCase(), 2500)
+                })
               }}
             >
               end game
@@ -144,7 +267,7 @@ function PlayPage() {
         </div>
 
         <div className="flex flex-col items-center gap-6 lg:col-span-2">
-          <MaskedWord slots={masked} flashingIndices={flashing} />
+          <MaskedWord slots={masked} flashingIndices={flashingIndices} />
           {!youHost ? (
             <KeyboardGrid
               letterGuessState={letters}

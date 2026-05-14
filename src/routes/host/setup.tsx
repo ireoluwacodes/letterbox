@@ -1,22 +1,20 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router"
+import { useMutation } from "convex/react"
 import { useForm } from "@tanstack/react-form"
-import { useEffect, useLayoutEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 
-import type { TSocketAckCreateGame } from "@/shared/socketEvents"
+import { api } from "../../../convex/_generated/api"
 import { BackLink } from "@/components/BackLink"
 import { BrutalButton } from "@/components/BrutalButton"
 import { CategoryRow } from "@/components/CategoryRow"
 import { Input } from "@/components/ui/input"
-import { fetchDefaultCategories } from "@/lib/api"
+import { DEFAULT_CATEGORY_ROW_NAMES } from "@/lib/defaultCategories"
+import { getConvexErrorMessage } from "@/lib/convexErrors"
 import { REPLAY_SESSION_KEY } from "@/lib/constants"
 import { writeHostSecretWords } from "@/lib/publicGameAdapter"
 import { saveHostSocketSession } from "@/lib/socketSession"
+import { getSessionId } from "@/lib/session"
 import { CreateGamePayloadSchema, WORD_REGEX } from "@/shared/schemas"
-import { SOCKET_EVENTS } from "@/shared/socketEvents"
-import { useGameStore } from "@/stores/gameStore"
-import { useSocketStore } from "@/stores/socketStore"
-
-const DEFAULT_ROW_NAMES = ["animal", "name", "place", "thing"]
 
 export const Route = createFileRoute("/host/setup")({
   component: HostSetupPage,
@@ -46,27 +44,12 @@ function HostSetupPage() {
   const navigate = useNavigate()
   const replay = useMemo(() => loadReplay(), [])
   const [submitError, setSubmitError] = useState<string | null>(null)
-  const [defaultNames, setDefaultNames] = useState<Array<string> | null>(null)
 
-  useLayoutEffect(() => {
-    useSocketStore.getState().connect()
-  }, [])
-
-  useEffect(() => {
-    let cancelled = false
-    void fetchDefaultCategories().then((rows) => {
-      if (!cancelled && rows.length > 0) {
-        setDefaultNames(rows.map((n) => n.toLowerCase()))
-      }
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [])
+  const createGame = useMutation(api.games.create)
 
   const initialCategories =
     replay?.categories ??
-    DEFAULT_ROW_NAMES.map((name) => ({ name, word: "" }))
+    [...DEFAULT_CATEGORY_ROW_NAMES].map((name) => ({ name, word: "" }))
 
   const form = useForm({
     defaultValues: {
@@ -90,65 +73,34 @@ function HostSetupPage() {
         return
       }
 
-      const socketStore = useSocketStore.getState()
-      socketStore.connect()
-      if (!socketStore.socket) {
-        setSubmitError("could not connect.")
-        return
-      }
-
       try {
-        await socketStore.waitForSocketConnected()
-      } catch (e) {
-        const fromStore = useSocketStore.getState().connectionError
-        const fromErr = e instanceof Error ? e.message : null
-        setSubmitError((fromStore ?? fromErr ?? "could not connect.").toLowerCase())
-        return
-      }
-
-      const s2 = useSocketStore.getState().socket
-      if (!s2) {
-        setSubmitError("could not connect.")
-        return
-      }
-
-      useSocketStore
-        .getState()
-        .emit(SOCKET_EVENTS.HOST_CREATE_GAME, parsed.data, (res: TSocketAckCreateGame) => {
-          if (!res.ok) {
-            setSubmitError(res.message.toLowerCase())
-            return
-          }
-          writeHostSecretWords(
-            res.gameId,
-            parsed.data.categories.map((c) => c.word)
-          )
-          saveHostSocketSession({
-            gameId: res.gameId,
-            inviteCode: res.inviteCode,
-          })
-          useGameStore.getState().setHostLobbyFromCreateAck({
-            gameId: res.gameId,
-            inviteCode: res.inviteCode,
-            pointsPerLetter: parsed.data.pointsPerLetter,
-            categoryNames: parsed.data.categories.map((c) => c.name),
-          })
-          useGameStore.getState().setIdentity(null, true)
-          void navigate({
-            to: "/lobby/$gameId",
-            params: { gameId: res.gameId },
-          })
+        const result = await createGame({
+          sessionId: getSessionId(),
+          hostName: parsed.data.hostName,
+          pointsPerLetter: parsed.data.pointsPerLetter,
+          categories: parsed.data.categories.map((c) => ({
+            name: c.name,
+            word: c.word,
+          })),
         })
+        const gid = result.gameId as string
+        writeHostSecretWords(
+          gid,
+          parsed.data.categories.map((c) => c.word),
+        )
+        saveHostSocketSession({
+          gameId: gid,
+          inviteCode: result.inviteCode,
+        })
+        void navigate({
+          to: "/lobby/$gameId",
+          params: { gameId: gid },
+        })
+      } catch (e) {
+        setSubmitError(getConvexErrorMessage(e).toLowerCase())
+      }
     },
   })
-
-  useEffect(() => {
-    if (!defaultNames?.length || replay?.categories) return
-    form.setFieldValue(
-      "categories",
-      defaultNames.map((name) => ({ name, word: "" }))
-    )
-  }, [defaultNames, replay, form])
 
   return (
     <div className="relative mx-auto max-w-[600px] px-6 pt-10 pb-36">
@@ -169,9 +121,7 @@ function HostSetupPage() {
             <form.Field name="hostName">
               {(field) => (
                 <label className="flex flex-col gap-2">
-                  <span className="text-[14px] font-bold">
-                    your name
-                  </span>
+                  <span className="text-[14px] font-bold">your name</span>
                   <Input
                     value={field.state.value}
                     onChange={(e) => field.handleChange(e.target.value)}
@@ -270,7 +220,7 @@ function HostSetupPage() {
                     c.name.trim().length > 0 &&
                     c.word.trim().length >= 2 &&
                     c.word.trim().length <= 30 &&
-                    WORD_REGEX.test(c.word.trim())
+                    WORD_REGEX.test(c.word.trim()),
                 )
                 const canSubmit = validHost && pts && allRowsOk
 
